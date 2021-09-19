@@ -172,12 +172,12 @@ class MockBinanceManager(BinanceAPIManager):
                 continue
             if coin == self.config.BRIDGE.symbol:
                 price = self.get_ticker_price(target_symbol + coin)
-                if price is None:
+                if price is None or price == 0.0:
                     continue
                 total += balance / price
             else:
                 price = self.get_ticker_price(coin + target_symbol)
-                if price is None:
+                if price is None or price == 0.0:
                     continue
                 total += price * balance
         return total
@@ -251,7 +251,7 @@ def backtest(
     try:
         while manager.datetime < end_date:
             try:
-                trader.scout()
+                trader.scout_tick()
             except Exception:  # pylint: disable=broad-except
                 logger.warning(format_exc())
             manager.increment(interval)

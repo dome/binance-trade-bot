@@ -11,7 +11,6 @@ from binance.exceptions import BinanceAPIException, BinanceRequestException
 from unicorn_binance_websocket_api import BinanceWebSocketApiManager
 
 from .config import Config
-from .database import Database
 from .logger import Logger
 
 class ThreadSafeAsyncLock:
@@ -114,9 +113,8 @@ class OrderGuard:
 
 
 class BinanceStreamManager:
-    def __init__(self, cache: BinanceCache, config: Config, binance_client: binance.client.Client, db: Database, logger: Logger):
+    def __init__(self, cache: BinanceCache, config: Config, binance_client: binance.client.Client, logger: Logger):
         self.cache = cache
-        self.db = db
         self.logger = logger
         self.bw_api_manager = BinanceWebSocketApiManager(
             output_default="UnicornFy", enable_stream_signal_buffer=True, exchange=f"binance.{config.BINANCE_TLD}"
@@ -130,15 +128,15 @@ class BinanceStreamManager:
 
 
         if config.PRICE_TYPE == Config.PRICE_TYPE_ORDERBOOK:
-
-            bridge_coin = config.BRIDGE_SYMBOL
-            coin_symbols = []
-
-            for coin in self.db.get_coins():
-                coin_symbols.append(coin.symbol.lower() + bridge_coin.lower())
+            supported_coin_list=config.SUPPORTED_COIN_LIST
+            bridge_coin=config.BRIDGE_SYMBOL
+            symbols = []
+            for symbol in supported_coin_list:
+                symbol=symbol.lower()+ bridge_coin.lower()
+                symbols.append(symbol)
 
             self.bw_api_manager.create_stream(
-                ["bookTicker"], coin_symbols
+                ["bookTicker"], symbols
             )
             
         self.binance_client = binance_client

@@ -2,8 +2,8 @@ version: "3"
 
 services:
   crypto-trading:
-    image: tntwist_binance_trade_bot
-    container_name: tntwist_binance_trader
+    image: idkravitz/binance-trade-bot
+    container_name: binance_trader
     working_dir: /app
     volumes:
       - ./user.cfg:/app/user.cfg
@@ -14,12 +14,10 @@ services:
     command: python -m binance_trade_bot
     environment:
       - PYTHONUNBUFFERED=1
-    stdin_open: true # docker run -i
-    tty: true        # docker run -t
 
   api:
-    image: tntwist_binance_trade_bot
-    container_name: tntwist_binance_trader_api
+    image: idkravitz/binance-trade-bot
+    container_name: binance_trader_api
     working_dir: /app
     volumes:
       - ./user.cfg:/app/user.cfg

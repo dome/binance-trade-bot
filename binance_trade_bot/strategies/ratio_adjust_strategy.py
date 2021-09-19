@@ -1,43 +1,34 @@
-from collections import defaultdict
 import random
 import sys
-import traceback
-from datetime import datetime, timedelta
-
-from sqlalchemy.orm import Session, aliased
-from sqlalchemy.sql.expression import and_
+from datetime import datetime
 
 from binance_trade_bot.auto_trader import AutoTrader
-from binance_trade_bot.database import Pair, Coin
+
 
 class Strategy(AutoTrader):
     def initialize(self):
-        self.logger.info(f"CAUTION: The ratio_adjust strategy can lead to losses! A lower ratio weight increases the risk! Use this strategy only if you know what you are doing, did alot of backtests and can live with possible losses.")
-
-        if self.config.ACCEPT_LOSSES != True:
-            self.logger.error("You need accept losses by setting accept_losses=true in the user.cfg or setting the enviroment variable ACCEPT_LOSSES to true in order to use this strategy!")
-            raise Exception()
+        self.logger.info(f"Caution: I thought about this for a while now and i decided to remove the gambling strategies from my fork. Its because of many people loosing money and  complaining by me...I added loss hints etc. and still many users decided to blind jump into them. So this strategy uses now the default strategy. The file wil be deleted in the next few days. This fork will concentrade in optimizing the defaults bot with addtional features and settings!")        
 
         super().initialize()
         self.initialize_current_coin()
-        self.reinit_threshold = self.manager.now().replace(second=0, microsecond=0)
-        self.logger.info(f"Ratio adjust weight: {self.config.RATIO_ADJUST_WEIGHT}")
 
     def scout(self):
-        #check if previous buy order failed. If so, bridge scout for a new coin.
-        if self.failed_buy_order:
-            self.bridge_scout()
-
-        base_time: datetime = self.manager.now()
-        allowed_idle_time = self.reinit_threshold
-        if base_time >= allowed_idle_time:
-            self.re_initialize_trade_thresholds()
-            self.reinit_threshold = self.manager.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
-
         """
         Scout for potential jumps from the current coin to another coin
         """
+        # check if previous buy order failed. If so, bridge scout for a new coin.
+        if self.failed_buy_order:
+            self.bridge_scout()
+
         current_coin = self.db.get_current_coin()
+        # Display on the console, the current coin+Bridge, so users can see *some* activity and not think the bot has
+        # stopped. Not logging though to reduce log size.
+        print(
+            f"{datetime.now()} - CONSOLE - INFO - I am scouting the best trades. "
+            f"Current coin: {current_coin + self.config.BRIDGE} ",
+            end="\r",
+        )
+
         current_coin_price = self.manager.get_sell_price(current_coin + self.config.BRIDGE)
 
         if current_coin_price is None:
@@ -95,122 +86,3 @@ class Strategy(AutoTrader):
                         current_coin, self.config.BRIDGE, self.manager.get_buy_price(current_coin + self.config.BRIDGE)
                     )
                     self.logger.info("Ready to start trading")
-
-    def re_initialize_trade_thresholds(self):
-        """
-        Update all the ratios a bit by saving the current price in the cumulative ratio, as a 1/Nth of the cumulative ratio with N = RATIO_ADJUST_WEIGHT
-        """
-        #updates all ratios
-        #print('************INITIALIZING RATIOS**********')
-        session: Session
-        with self.db.db_session() as session:
-            c1 = aliased(Coin)
-            c2 = aliased(Coin)
-            for pair in session.query(Pair).all():
-                if not pair.from_coin.enabled or not pair.to_coin.enabled:
-                    continue
-                # self.logger.info(f"Initializing {pair.from_coin} vs {pair.to_coin}")
-
-                from_coin_price = self.manager.get_sell_price(pair.from_coin + self.config.BRIDGE)
-                if from_coin_price is None:
-                    # self.logger.debug(
-                    #     "Skipping initializing {}, symbol not found".format(pair.from_coin + self.config.BRIDGE),
-                    #     False
-                    # )
-                    continue
-
-                to_coin_price = self.manager.get_buy_price(pair.to_coin + self.config.BRIDGE)
-                if to_coin_price is None:
-                    # self.logger.debug(
-                    #     "Skipping initializing {}, symbol not found".format(pair.to_coin + self.config.BRIDGE),
-                    #     False
-                    # )
-                    continue
-
-                if not pair.ratio:
-                    pair.ratio = from_coin_price / to_coin_price
-
-                new_ratio = (pair.ratio * self.config.RATIO_ADJUST_WEIGHT + from_coin_price / to_coin_price)  / (self.config.RATIO_ADJUST_WEIGHT + 1)
-
-                self.logger.info(f"re-initialize: update ratio for pair {pair.from_coin} {pair.to_coin} from {pair.ratio} to {new_ratio}", notification=False)
-
-                pair.ratio = new_ratio
-                pair.from_coin_price = from_coin_price
-                pair.to_coin_price = to_coin_price
-
-        stacktrace = traceback.format_stack()
-        self.logger.info(f"stacktrace: {stacktrace}")
-
-    def initialize_trade_thresholds(self):
-        """
-        Initialize the buying threshold of all the coins for trading between them
-        """
-        session: Session
-        with self.db.db_session() as session:
-            pairs = session.query(Pair).filter(Pair.ratio.is_(None)).all()
-            grouped_pairs = defaultdict(list)
-            for pair in pairs:
-                if pair.from_coin.enabled and pair.to_coin.enabled:
-                    grouped_pairs[pair.from_coin.symbol].append(pair)
-
-            price_history = {}
-
-            init_weight = self.config.RATIO_ADJUST_WEIGHT
-
-            # Binance api allows retrieving max 1000 candles
-            if init_weight > 500:
-                init_weight = 500
-
-            self.logger.info(f"Using last {init_weight} candles to initialize ratios")
-
-            base_date = self.manager.now().replace(second=0, microsecond=0)
-            start_date = base_date - timedelta(minutes=init_weight*2)
-            end_date = base_date - timedelta(minutes=1)
-
-            start_date_str = start_date.strftime('%Y-%m-%d %H:%M')
-            end_date_str = end_date.strftime('%Y-%m-%d %H:%M')
-
-            self.logger.info(f"Starting ratio init: Start Date: {start_date}, End Date {end_date}")
-            for from_coin_symbol, group in grouped_pairs.items():
-
-                if from_coin_symbol not in price_history.keys():
-                    price_history[from_coin_symbol] = []
-                    for result in self.manager.binance_client.get_historical_klines(f"{from_coin_symbol}{self.config.BRIDGE_SYMBOL}", "1m", start_date_str, end_date_str, limit=init_weight*2):
-                        price = float(result[1])
-                        price_history[from_coin_symbol].append(price)
-
-                for pair in group:
-                    to_coin_symbol = pair.to_coin.symbol
-                    if to_coin_symbol not in price_history.keys():
-                        price_history[to_coin_symbol] = []
-                        for result in self.manager.binance_client.get_historical_klines(f"{to_coin_symbol}{self.config.BRIDGE_SYMBOL}", "1m", start_date_str, end_date_str, limit=init_weight*2):
-                           price = float(result[1])
-                           price_history[to_coin_symbol].append(price)
-
-                    while len(price_history[from_coin_symbol]) < init_weight*2:
-                        price_history[from_coin_symbol].insert(0, sum(price_history[from_coin_symbol]) / len(price_history[from_coin_symbol]))
-                    while len(price_history[to_coin_symbol]) < init_weight*2:
-                        price_history[to_coin_symbol].insert(0, sum(price_history[to_coin_symbol]) / len(price_history[to_coin_symbol]))
-
-                    if len(price_history[from_coin_symbol]) != init_weight*2:
-                        self.logger.info(len(price_history[from_coin_symbol]))
-                        self.logger.info(f"Skip initialization. Could not fetch last {init_weight * 2} prices for {from_coin_symbol}, only {len(price_history[from_coin_symbol])}")
-                        continue
-                    if len(price_history[to_coin_symbol]) != init_weight*2:
-                        self.logger.info(f"Skip initialization. Could not fetch last {init_weight * 2} prices for {to_coin_symbol}, only {en(price_history[to_coin_symbol])}")
-                        continue
-
-                    sma_ratio = 0.0
-                    for i in range(init_weight):
-                        sma_ratio += price_history[from_coin_symbol][i] / price_history[to_coin_symbol][i]
-                    sma_ratio = sma_ratio / init_weight
-
-                    cumulative_ratio = sma_ratio
-                    for i in range(init_weight, init_weight * 2):
-                        cumulative_ratio = (cumulative_ratio * init_weight + price_history[from_coin_symbol][i] / price_history[to_coin_symbol][i]) / (init_weight + 1)
-
-                    self.logger.info(f"initialize: init ratio for pair {pair.from_coin} {pair.to_coin} from {pair.ratio} to {cumulative_ratio}", notification=False)
-
-                    pair.ratio = cumulative_ratio
-
-            self.logger.info(f"Finished ratio init...")

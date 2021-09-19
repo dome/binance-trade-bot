@@ -121,6 +121,7 @@ class BinanceAPIManager:
         self.cache = cache
         self.order_balance_manager = order_balance_manager
         self.stream_manager: Optional[BinanceStreamManager] = None
+        self.setup_websockets()
 
     @staticmethod
     def _common_factory(
@@ -168,8 +169,7 @@ class BinanceAPIManager:
             self.cache,
             self.config,
             self.binance_client,
-            self.db,
-            self.logger
+            self.logger,
         )
 
     @cached(cache=TTLCache(maxsize=1, ttl=43200))
@@ -215,35 +215,6 @@ class BinanceAPIManager:
         Get account information
         """
         return self.binance_client.get_account()
-
-    def get_exchange_info(self):
-        """
-        Get account information
-        """
-        return self.binance_client.get_exchange_info()
-
-
-    def get_tradable_coins(self, quote_asset=None):
-        exchange_info = self.get_exchange_info()
-
-        tradable_coins = []
-
-        for symbol in exchange_info['symbols']:
-            if symbol['status'] != 'TRADING':
-                continue
-
-            if quote_asset is not None:
-                if symbol['quoteAsset'] != quote_asset:
-                    continue
-
-            tradable_coins.append(symbol['baseAsset'])
-
-        return tradable_coins
-
-
-    def get_ticker(self, ticker_symbol: str):
-        return self.binance_client.get_ticker(symbol = ticker_symbol)
-
 
     def get_buy_price(self, ticker_symbol: str):
         price_type = self.config.PRICE_TYPE
@@ -479,7 +450,9 @@ class BinanceAPIManager:
 
         self.logger.info(f"Needed/available BNB balance: {fee_amount_bnb}/{bnb_balance}, buy quantity: {buy_quantity}...")
 
-        self.retry(self._buy_alt, Coin("BNB"), target_coin, bnb_price, buy_quantity)
+        is_bnb_enabled = "BNB" in self.config.SUPPORTED_COIN_LIST
+
+        self.retry(self._buy_alt, Coin("BNB", enabled=is_bnb_enabled), target_coin, bnb_price, buy_quantity)
 
     def buy_alt(self, origin_coin: Coin, target_coin: Coin, buy_price: float) -> BinanceOrder:
         return self.retry(self._buy_alt, origin_coin, target_coin, buy_price)
@@ -525,7 +498,7 @@ class BinanceAPIManager:
             order_quantity = self._buy_quantity(origin_symbol, target_symbol, target_balance, from_coin_price)
         else:
             order_quantity = buy_quantity
-        self.logger.info(f"Buying {order_quantity} <{origin_symbol}> (price: {round(buy_price, 4)})")
+        self.logger.info(f"BUY QTY {order_quantity} of <{origin_symbol}>")
 
         # Try to buy until successful
         order = None
@@ -558,10 +531,7 @@ class BinanceAPIManager:
         if order is None:
             return None
 
-        if not order.price:
-            order.price = order.cumulative_quote_qty/order_quantity
-
-        self.logger.info(f"Bought {order_quantity} <{origin_symbol}> (price: {round(order.price, 4)}) for a total of {order.cumulative_quote_qty} {target_symbol}")
+        self.logger.info(f"Bought {origin_symbol}")
 
         trade_log.set_complete(order.cumulative_quote_qty)
 
@@ -600,8 +570,9 @@ class BinanceAPIManager:
         trade_log = self.db.start_trade_log(origin_coin, target_coin, True)
 
         order_quantity = self._sell_quantity(origin_symbol, target_symbol, origin_balance)
-        self.logger.info(f"Selling {order_quantity} <{origin_symbol}> (price: {round(sell_price, 4)}). Balance: {origin_balance} <{origin_symbol}>")
+        self.logger.info(f"Selling {order_quantity} of {origin_symbol}")
 
+        self.logger.info(f"Balance is {origin_balance}")
         order = None
         order_guard = self.stream_manager.acquire_order_guard()
         while order is None:
@@ -635,10 +606,7 @@ class BinanceAPIManager:
         while new_balance >= origin_balance:
             new_balance = self.get_currency_balance(origin_symbol, True)
 
-        if not order.price:
-            order.price = order.cumulative_quote_qty/order_quantity
-
-        self.logger.info(f"Sold {order_quantity} <{origin_symbol}> (price: {round(order.price, 4)}) for a total of {order.cumulative_quote_qty} {target_symbol}")
+        self.logger.info(f"Sold {origin_symbol}")
 
         trade_log.set_complete(order.cumulative_quote_qty)
 

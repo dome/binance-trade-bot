@@ -15,6 +15,12 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
 
     PRICE_TYPE_ORDERBOOK = "orderbook"
     PRICE_TYPE_TICKER = "ticker"
+    
+    RATIO_CALC_DEFAULT = "default"
+    RATIO_CALC_SCOUT_MARGIN = "scout_margin"
+
+    STOP_LOSS_PRICE_BUY = "buy"
+    STOP_LOSS_PRICE_MAX = "max"
 
     def __init__(self):
         # Init config
@@ -22,10 +28,7 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
         config["DEFAULT"] = {
             "bridge": "USDT",
             "scout_multiplier": "5",
-            "scout_margin": "0.8",
             "scout_sleep_time": "5",
-            "scout_debug":"true",
-            "use_margin":"true",
             "hourToKeepScoutHistory": "1",
             "tld": "com",
             "trade_fee": "auto",
@@ -38,18 +41,17 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
             "sell_max_price_change": "0.005",
             "buy_max_price_change": "0.005",
             "price_type": self.PRICE_TYPE_ORDERBOOK,
+            "ratio_calc": "default",
+            "enable_stop_loss": "false",
+            "stop_loss_price": self.STOP_LOSS_PRICE_BUY,
+            "stop_loss_percentage": "5.0",
+            "stop_loss_ban_duration": "60.0",
             "accept_losses": "false",
             "max_idle_hours": "3",
             "ratio_adjust_weight":"100",
             "auto_adjust_bnb_balance": "false",
             "auto_adjust_bnb_balance_rate": "3",
-            "trailing_stop":"true",
-            "trailing_stop_coin_price_multiplier_init":"0.9965",
-            "trailing_stop_coin_price_multiplier": "0.9955",
-            "trailing_stop_ratio_calc_coin_price_multiplier": "0.9995",
-            "supported_coins_method": "list",
-            "auto_coin_selector_min_volume": "80000000",
-            "auto_coin_selector_add_coins_from_list": "True"
+            "allow_coin_merge": "true"
         }
 
         if not os.path.exists(CFG_FL_NAME):
@@ -70,9 +72,6 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
         self.SCOUT_MULTIPLIER = float(
             os.environ.get("SCOUT_MULTIPLIER") or config.get(USER_CFG_SECTION, "scout_multiplier")
         )
-        self.SCOUT_MARGIN = float(
-            os.environ.get("SCOUT_MARGIN") or config.get(USER_CFG_SECTION, "scout_margin")
-        )
         self.SCOUT_SLEEP_TIME = int(
             os.environ.get("SCOUT_SLEEP_TIME") or config.get(USER_CFG_SECTION, "scout_sleep_time")
         )
@@ -86,14 +85,12 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
         self.BINANCE_API_SECRET_KEY = os.environ.get("API_SECRET_KEY") or config.get(USER_CFG_SECTION, "api_secret_key")
         self.BINANCE_TLD = os.environ.get("TLD") or config.get(USER_CFG_SECTION, "tld")
 
-
-        self.CURRENT_COIN_SYMBOL = os.environ.get("CURRENT_COIN_SYMBOL") or config.get(USER_CFG_SECTION, "current_coin")
-
-
         # Get supported coin list from the environment
         supported_coin_list = [
             coin.strip() for coin in os.environ.get("SUPPORTED_COIN_LIST", "").split() if coin.strip()
         ]
+
+        self.TRADE_FEE = os.environ.get("TRADE_FEE") or config.get(USER_CFG_SECTION, "trade_fee")
 
         # Get supported coin list from supported_coin_list file
         if not supported_coin_list and os.path.exists("supported_coin_list"):
@@ -103,17 +100,11 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
                     if not line or line.startswith("#") or line in supported_coin_list:
                         continue
                     supported_coin_list.append(line)
-        if self.CURRENT_COIN_SYMBOL and self.CURRENT_COIN_SYMBOL not in supported_coin_list:
-            supported_coin_list.append(self.CURRENT_COIN_SYMBOL)
         self.SUPPORTED_COIN_LIST = supported_coin_list
 
-        self.TRADE_FEE = os.environ.get("TRADE_FEE") or config.get(USER_CFG_SECTION, "trade_fee")
+        self.CURRENT_COIN_SYMBOL = os.environ.get("CURRENT_COIN_SYMBOL") or config.get(USER_CFG_SECTION, "current_coin")
 
         self.STRATEGY = os.environ.get("STRATEGY") or config.get(USER_CFG_SECTION, "strategy")
-
-        self.SCOUT_DEBUG = str(os.environ.get("SCOUT_DEBUG") or config.get(USER_CFG_SECTION, "scout_debug")).lower() == "true"
-
-        self.USE_MARGIN = str(os.environ.get("USE_MARGIN") or config.get(USER_CFG_SECTION, "use_margin")).lower() == "true"
 
         enable_paper_trading_str = os.environ.get("ENABLE_PAPER_TRADING") or config.get(USER_CFG_SECTION, "enable_paper_trading")
         self.ENABLE_PAPER_TRADING = enable_paper_trading_str == "true" or enable_paper_trading_str == "True"
@@ -147,10 +138,10 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
                 "for buy_order_type"
             )
         #if buy_order_type == self.ORDER_TYPE_MARKET:
-            #raise Exception(
-            #    "Market buys are reported to do extreme losses, they are disabled right now,"
-            #    "comment this line only if you know what you're doing"
-            #)
+        #    raise Exception(
+        #        "Market buys are reported to do extreme losses, they are disabled right now,"
+        #        "comment this line only if you know what you're doing"
+        #    )
         self.BUY_ORDER_TYPE = order_type_map[buy_order_type]
 
         self.BUY_MAX_PRICE_CHANGE = os.environ.get("BUY_MAX_PRICE_CHANGE") or config.get(USER_CFG_SECTION, "buy_max_price_change")
@@ -167,6 +158,42 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
             raise Exception(f"{self.PRICE_TYPE_ORDERBOOK} or {self.PRICE_TYPE_TICKER} expected, got {price_type} for price_type")
         self.PRICE_TYPE = price_type
 
+        ratio_calcs = {
+            self.RATIO_CALC_DEFAULT,
+            self.RATIO_CALC_SCOUT_MARGIN
+        }
+
+        ratio_calc = os.environ.get("RATIO_CALC") or config.get(
+            USER_CFG_SECTION, "ratio_calc", fallback=self.RATIO_CALC_DEFAULT
+        )
+        if ratio_calc not in ratio_calcs:
+            raise Exception(
+                f"{self.RATIO_CALC_DEFAULT} or {self.RATIO_CALC_SCOUT_MARGIN} expected, got {ratio_calc}"
+                "for ratio_calc"
+            )
+        self.RATIO_CALC = ratio_calc
+
+        enable_stop_loss_str = os.environ.get("ENABLE_STOP_LOSS") or config.get(USER_CFG_SECTION, "enable_stop_loss")
+        self.ENABLE_STOP_LOSS = enable_stop_loss_str == 'true' or enable_stop_loss_str == 'True'
+        
+        stop_loss_prices = {
+            self.STOP_LOSS_PRICE_BUY,
+            self.STOP_LOSS_PRICE_MAX
+        }
+
+        stop_loss_price = os.environ.get("STOP_LOSS_PRICE") or config.get(
+            USER_CFG_SECTION, "stop_loss_price", fallback=self.STOP_LOSS_PRICE_BUY
+        )
+        if stop_loss_price not in stop_loss_prices:
+            raise Exception(
+                f"{self.STOP_LOSS_PRICE_BUY} or {self.STOP_LOSS_PRICE_MAX} expected, got {stop_loss_price}"
+                "for stop_loss_price"
+            )        
+        self.STOP_LOSS_PRICE = stop_loss_price
+
+        self.STOP_LOSS_PERCENTAGE = float(os.environ.get("STOP_LOSS_PERCENTAGE") or config.get(USER_CFG_SECTION, "stop_loss_percentage"))        
+        self.STOP_LOSS_BAN_DURATION = float(os.environ.get("STOP_LOSS_BAN_DURATION") or config.get(USER_CFG_SECTION, "stop_loss_ban_duration"))
+
         accept_losses_str = os.environ.get("ACCEPT_LOSSES") or config.get(USER_CFG_SECTION, "accept_losses")
         self.ACCEPT_LOSSES = accept_losses_str == 'true' or accept_losses_str == 'True'
 
@@ -179,42 +206,5 @@ class Config:  # pylint: disable=too-few-public-methods,too-many-instance-attrib
             os.environ.get("AUTO_ADJUST_BNB_BALANCE_RATE") or config.get(USER_CFG_SECTION, "auto_adjust_bnb_balance_rate")
         )
 
-        trailing_stop_str = os.environ.get("TRAILING_STOP") or config.get(USER_CFG_SECTION, "trailing_stop")
-        self.TRAILING_STOP = str(trailing_stop_str).lower() == "true"
-
-        self.TRAILING_STOP_COIN_PRICE_MULTIPLIER_INIT = float(
-            os.environ.get("TRAILING_STOP_COIN_PRICE_MULTIPLIER_INIT") or config.get(USER_CFG_SECTION, "trailing_stop_coin_price_multiplier_init")
-        )
-
-        self.TRAILING_STOP_COIN_PRICE_MULTIPLIER = float(
-            os.environ.get("TRAILING_STOP_COIN_PRICE_MULTIPLIER") or config.get(USER_CFG_SECTION, "trailing_stop_coin_price_multiplier")
-        )
-
-        self.TRAILING_STOP_RATIO_CALC_COIN_PRICE_MULTIPLIER = float(
-            os.environ.get("TRAILING_STOP_RATIO_CALC_COIN_PRICE_MULTIPLIER") or config.get(USER_CFG_SECTION, "trailing_stop_ratio_calc_coin_price_multiplier")
-        )
-
-        supported_coins_method_str = os.environ.get("SUPPORTED_COINS_METHOD") or config.get(USER_CFG_SECTION, "supported_coins_method")
-        self.SUPPORTED_COINS_METHOD = str(supported_coins_method_str).lower()
-
-        # Get auto coin selector blacklist list from the environment
-        auto_coin_selector_blacklist = [
-            coin.strip() for coin in os.environ.get("AUTO_COIN_SELECTOR_BLACKLIST", "").split() if coin.strip()
-        ]
-
-        # Get auto coin selector blacklist from auto_coin_selector_blacklist file
-        if not auto_coin_selector_blacklist and os.path.exists("auto_coin_selector_blacklist"):
-            with open("auto_coin_selector_blacklist") as rfh:
-                for line in rfh:
-                    line = line.strip()
-                    if not line or line.startswith("#") or line in auto_coin_selector_blacklist:
-                        continue
-                    auto_coin_selector_blacklist.append(line)
-        self.AUTO_COIN_SELECTOR_BLACKLIST = auto_coin_selector_blacklist
-
-        self.AUTO_COIN_SELECTOR_MIN_VOLUME = float(
-            os.environ.get("AUTO_COIN_SELECTOR_MIN_VOLUME") or config.get(USER_CFG_SECTION, "auto_coin_selector_min_volume")
-        )
-
-        auto_coin_selector_add_coins_from_list_str = os.environ.get("AUTO_COIN_SELECTOR_ADD_COINS_FROM_LIST") or config.get(USER_CFG_SECTION, "auto_coin_selector_add_coins_from_list")
-        self.AUTO_COIN_SELECTOR_ADD_COINS_FROM_LIST = str(auto_coin_selector_add_coins_from_list_str).lower() == "true"
+        allow_coin_merge = os.environ.get("ALLOW_COIN_MERGE") or config.get(USER_CFG_SECTION, "allow_coin_merge")
+        self.ALLOW_COIN_MERGE = str(allow_coin_merge).lower == 'true'

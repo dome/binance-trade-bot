@@ -12,7 +12,13 @@ class Strategy(AutoTrader):
 
         # Display on the console, the current coin+Bridge, so users can see *some* activity and not think the bot
         # has stopped. Not logging though to reduce log size.
-        self.logger.info(f"{self.manager.now()} - CONSOLE - INFO - I am scouting the best trades. Current coins: {active_coins} ", notification=False)
+        print(
+            f"{self.manager.now()} - CONSOLE - INFO - I am scouting the best trades. "
+            f"Current coins: {active_coins} ",
+            end="\r",
+        )
+
+        excluded_coins = []
 
         for coin in active_coins:
             coin_price = self.manager.get_sell_price(coin + self.config.BRIDGE)
@@ -20,11 +26,13 @@ class Strategy(AutoTrader):
             if coin_price is None:
                 self.logger.info("Skipping scouting... current coin {} not found".format(coin + self.config.BRIDGE))
                 continue
+            
+            if self.config.ALLOW_COIN_MERGE == False:
+                #fetch active coin again to avoid some coins fusioning by jumping to the same coin in the same scout run
+                current_active_coins = self.get_active_coins()
+                excluded_coins = current_active_coins
 
-            #fetch active coin again to avoid some coins fusioning by jumping to the same coin in the same scout run
-            current_active_coins = self.get_active_coins()
-
-            self._jump_to_best_coin(coin, coin_price, current_active_coins)
+            self._jump_to_best_coin(coin, coin_price, excluded_coins)
 
             # if a jump fails try buying another coin to avoid the next coin takes the bridge value
             if self.failed_buy_order:
@@ -45,7 +53,7 @@ class Strategy(AutoTrader):
             if coin_price is None:
                 self.logger.info("Skipping scouting... coin {} not found".format(coin + self.config.BRIDGE))
                 continue
-
+            
             min_notional = self.manager.get_min_notional(coin.symbol, self.config.BRIDGE.symbol)
             if coin_price * current_coin_balance > min_notional:
                 active_coins.append(coin)
@@ -62,7 +70,7 @@ class Strategy(AutoTrader):
         active_coin_symbols = [c.symbol for c in active_coins]
         for coin in self.db.get_coins():
             #skip active coins, we dont want coin fusion
-            if coin.symbol in active_coin_symbols:
+            if self.config.ALLOW_COIN_MERGE == False and coin.symbol in active_coin_symbols:
                 continue
 
             current_coin_price = self.manager.get_sell_price(coin + self.config.BRIDGE)
@@ -70,7 +78,7 @@ class Strategy(AutoTrader):
             if current_coin_price is None:
                 continue
 
-            ratio_dict, _prices, ratio_debug = self._get_ratios(coin, current_coin_price, active_coins)
+            ratio_dict, _ = self._get_ratios(coin, current_coin_price, active_coins)
             if not any(v > 0 for v in ratio_dict.values()):
                 # There will only be one coin where all the ratios are negative. When we find it, buy it if we can
                 if bridge_balance > self.manager.get_min_notional(coin.symbol, self.config.BRIDGE.symbol):
